@@ -1,0 +1,158 @@
+{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "view-in-github",
+        "colab_type": "text"
+      },
+      "source": [
+        "<a href=\"https://colab.research.google.com/github/zar1Z/non-iid-dataset-for-personalized-federated-learning/blob/master/create_MNIST_datasets.py\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 1,
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "bAKp6U_F9Crj",
+        "outputId": "a383e538-1e93-4374-f626-eff12f537ce3"
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Mounted at /content/drive\n"
+          ]
+        }
+      ],
+      "source": [
+        "from google.colab import drive\n",
+        "drive.mount('/content/drive')"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import torch\n",
+        "from torchvision import datasets\n",
+        "from torchvision import transforms\n",
+        "import matplotlib.pyplot as plt\n",
+        "\n",
+        "def non_iid_split(dataset, nb_nodes, n_samples_per_node, batch_size, shuffle, shuffle_digits=False):\n",
+        "    assert(nb_nodes>0 and nb_nodes<=10)\n",
+        "\n",
+        "    digits=torch.arange(10) if shuffle_digits==False else torch.randperm(10, generator=torch.Generator().manual_seed(0))\n",
+        "\n",
+        "    # split the digits in a fair way\n",
+        "    digits_split=list()\n",
+        "    i=0\n",
+        "    for n in range(nb_nodes, 0, -1):\n",
+        "        inc=int((10-i)/n)\n",
+        "        digits_split.append(digits[i:i+inc])\n",
+        "        i+=inc\n",
+        "\n",
+        "    # load and shuffle nb_nodes*n_samples_per_node from the dataset\n",
+        "    loader = torch.utils.data.DataLoader(dataset,\n",
+        "                                        batch_size=nb_nodes*n_samples_per_node,\n",
+        "                                        shuffle=shuffle)\n",
+        "    dataiter = iter(loader)\n",
+        "    images_train_mnist, labels_train_mnist = dataiter.next()\n",
+        "\n",
+        "    data_splitted=list()\n",
+        "    for i in range(nb_nodes):\n",
+        "        idx=torch.stack([y_ == labels_train_mnist for y_ in digits_split[i]]).sum(0).bool() # get indices for the digits\n",
+        "        data_splitted.append(torch.utils.data.DataLoader(torch.utils.data.TensorDataset(images_train_mnist[idx], labels_train_mnist[idx]), batch_size=batch_size, shuffle=shuffle))\n",
+        "\n",
+        "    return data_splitted\n",
+        "\n",
+        "\n",
+        "\n",
+        "def iid_split(dataset, nb_nodes, n_samples_per_node, batch_size, shuffle):\n",
+        "    # load and shuffle n_samples_per_node from the dataset\n",
+        "    loader = torch.utils.data.DataLoader(dataset,\n",
+        "                                        batch_size=n_samples_per_node,\n",
+        "                                        shuffle=shuffle)\n",
+        "    dataiter = iter(loader)\n",
+        "    \n",
+        "    data_splitted=list()\n",
+        "    for _ in range(nb_nodes):\n",
+        "        data_splitted.append(torch.utils.data.DataLoader(torch.utils.data.TensorDataset(*(dataiter.next())), batch_size=batch_size, shuffle=shuffle))\n",
+        "\n",
+        "    return data_splitted\n",
+        "\n",
+        "\n",
+        "def  get_Covid(type=\"iid\", n_samples_train=200, n_samples_test=100, n_clients=3, batch_size=25, shuffle=True):\n",
+        "    dataset_loaded_train = datasets(\n",
+        "            root=\"/content/drive/MyDrive/Covid19_3.zip (Unzipped Files)/Covid19_3/train\",\n",
+        "            train=True,\n",
+        "            download=True,\n",
+        "            transform=transforms.ToTensor()\n",
+        "    )\n",
+        "    dataset_loaded_test = datasets(\n",
+        "            root=\"/content/drive/MyDrive/Covid19_3.zip (Unzipped Files)/Covid19_3/Test\",\n",
+        "            train=False,\n",
+        "            download=True,\n",
+        "            transform=transforms.ToTensor()\n",
+        "    )\n",
+        "\n",
+        "    if type==\"iid\":\n",
+        "        train=iid_split(dataset_loaded_train, n_clients, n_samples_train, batch_size, shuffle)\n",
+        "        test=iid_split(dataset_loaded_test, n_clients, n_samples_test, batch_size, shuffle)\n",
+        "    elif type==\"non_iid\":\n",
+        "        train=non_iid_split(dataset_loaded_train, n_clients, n_samples_train, batch_size, shuffle)\n",
+        "        test=non_iid_split(dataset_loaded_test, n_clients, n_samples_test, batch_size, shuffle)\n",
+        "    else:\n",
+        "        train=[]\n",
+        "        test=[]\n",
+        "\n",
+        "    return train, test\n",
+        "\n",
+        "\n",
+        "    \n",
+        "def plot_samples(data, channel:int, title=None, plot_name=\"\", n_examples =20):\n",
+        "\n",
+        "    n_rows = int(n_examples / 5)\n",
+        "    plt.figure(figsize=(1* n_rows, 1*n_rows))\n",
+        "    if title: plt.suptitle(title)\n",
+        "    X, y= data\n",
+        "    for idx in range(n_examples):\n",
+        "        \n",
+        "        ax = plt.subplot(n_rows, 5, idx + 1)\n",
+        "\n",
+        "        image = 255 - X[idx, channel].view((28,28))\n",
+        "        ax.imshow(image, cmap='gist_gray')\n",
+        "        ax.axis(\"off\")\n",
+        "\n",
+        "    if plot_name!=\"\":plt.savefig(f\"plots/\"+plot_name+\".png\")\n",
+        "\n",
+        "    plt.tight_layout()"
+      ],
+      "metadata": {
+        "id": "XFhMd3NFRcNo"
+      },
+      "execution_count": 2,
+      "outputs": []
+    }
+  ],
+  "metadata": {
+    "colab": {
+      "name": "create_MNIST_datasets.py",
+      "provenance": [],
+      "authorship_tag": "ABX9TyMy57Jrxb21YBe9DSm9gD5J",
+      "include_colab_link": true
+    },
+    "kernelspec": {
+      "display_name": "Python 3",
+      "name": "python3"
+    },
+    "language_info": {
+      "name": "python"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 0
+}
